@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SC CS Enrollment Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .dashboard-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .map-container {
+            width: 100%;
+            height: 600px;
+            margin: 20px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 4px;
+        }
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        select, button {
+            width: 100%;
+            padding: 8px;
+            margin-top: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            display: none;
+        }
+        .data-table th, .data-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .data-table th {
+            background-color: #f2f2f2;
+        }
+        .data-table tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-style: italic;
+            color: #666;
+        }
+        .debug-info {
+            background: #333;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            font-family: monospace;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .debug-error {
+            color: #ff6b6b;
+        }
+        .marker-cluster {
+            background-color: rgba(52, 152, 219, 0.6);
+            border-radius: 50%;
+            text-align: center;
+            color: white;
+            font-weight: bold;
+        }
+        .marker-cluster div {
+            width: 30px;
+            height: 30px;
+            margin-left: 5px;
+            margin-top: 5px;
+            background-color: rgba(41, 128, 185, 0.6);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .district-style {
+            stroke: white !important;
+            stroke-width: 1px !important;
+        }
+        .course-list {
+            margin-top: 5px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .course-item {
+            padding: 3px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .shared-school-label {
+            font-size: 0.8em;
+            color: #666;
+            font-style: italic;
+        }
+        .special-marker {
+            text-align: center;
+            font-weight: bold;
+        }
+        .virtual-marker {
+            color: #555;
+        }
+        .shared-marker {
+            color: #3388ff;
+        }
+        .virtual-district {
+            stroke-dasharray: 5, 5;
+            fill-opacity: 0.1;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <h1>South Carolina Computer Science Enrollment</h1>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="course-select">Select Course:</label>
+                <select id="course-select">
+                    <option value="all">All Courses</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <button id="update-btn">Update Map</button>
+                <button id="show-table-btn">Show Data Table</button>
+            </div>
+        </div>
+        
+        <div class="map-container" id="map">
+            <div class="loading" id="loading-message">Loading map and data...</div>
+        </div>
+        
+        <div class="debug-info" id="debug-console">
+            System initializing...
+        </div>
+        
+        <table class="data-table" id="data-table">
+            <thead>
+                <tr>
+                    <th>District</th>
+                    <th>School</th>
+                    <th>Courses</th>
+                    <th>Total Enrollment</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    
+    <script>
+    // Configuration
+    const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTVfz5VOSloRh1Hct2Ha-NpFKn6PmDyzG8gIeuQKlPLTQt9fcP9ARr1g6_YaRsJDw/pub?gid=1039515014&single=true&output=csv';
+    const GEOJSON_URL = 'https://raw.githubusercontent.com/20MatthewNeal/DistrictShapes2025/refs/heads/main/tl_2022_45_unsd.json';
+    const MAP_CENTER = [33.8361, -81.1637];
+    const MAP_ZOOM = 7;
+    const MIN_ZOOM = 6;
+    const MAX_ZOOM = 10;
+    
+    // Updated virtual district polygons with more spacing in ocean area
+    const VIRTUAL_DISTRICTS = {
+        'Charter Institute at Erskine': {
+            coords: [[31.0, -78.0], [31.0, -77.5], [31.5, -77.5], [31.5, -78.0]],
+            color: "#8e44ad",
+            center: [31.25, -77.75]
+        },
+        'SC Public Charter District': {
+            coords: [[31.0, -79.0], [31.0, -78.5], [31.5, -78.5], [31.5, -79.0]],
+            color: "#3498db",
+            center: [31.25, -78.75]
+        },
+        'Limestone Charter Association': {
+            coords: [[30.5, -78.5], [30.5, -78.0], [31.0, -78.0], [31.0, -78.5]],
+            color: "#e74c3c",
+            center: [30.75, -78.25]
+        },
+        'State Schools': {
+            coords: [[30.5, -79.5], [30.5, -79.0], [31.0, -79.0], [31.0, -79.5]],
+            color: "#2ecc71",
+            center: [30.75, -79.25]
+        }
+    };
+
+    // District merging configuration with corrected name matching
+    const DISTRICT_MERGES = {
+        'Bamberg County School District': ['Bamberg 1', 'Bamberg 2', 'Bamberg 3', 'Bamberg School District 1', 'Bamberg School District 2', 'Bamberg School District 3', 'Bamberg 80'],
+        'Hampton County School District': ['Hampton 1', 'Hampton 2', 'Hampton 3', 'Hampton School District 1', 'Hampton School District 2', 'Hampton School District 3'],
+        'Clarendon County School District': ['Clarendon 1', 'Clarendon 2', 'Clarendon 3', 'Clarendon School District 1', 'Clarendon School District 2', 'Clarendon School District 3', 'Clarendon 6'],
+        'Florence School District 1': ['Florence 1', 'Florence 4', 'Florence School District 1', 'Florence School District 4'],
+        'Barnwell School District 45': ['Barnwell 19', 'Barnwell 29', 'Barnwell 45', 'Barnwell 48', 'Barnwell School District 19', 'Barnwell School District 29', 'Barnwell County Consolidated School District', 'Barnwell 80', 'School District Not Defined'],
+        'Orangeburg County School District': ['Orangeburg 81', 'Orangeburg']
+    };
+
+    // Special districts with enhanced handling
+    const SPECIAL_DISTRICTS = {
+        'Charter Institute at Erskine': { type: 'virtual' },
+        'State Schools': { type: 'virtual' },
+        'SC Public Charter District': { type: 'virtual' },
+        'Limestone Charter Association': { type: 'virtual' },
+        'Anderson 80': { type: 'split', districts: ['Anderson 1', 'Anderson 2'], weights: [0.5, 0.5] },
+        'Anderson 81': { type: 'split', districts: ['Anderson 3', 'Anderson 4', 'Anderson 5'], weights: [0.33, 0.33, 0.34] },
+        'Barnwell 80': { type: 'split', districts: ['Barnwell 45', 'Barnwell 48'], weights: [0.5, 0.5] },
+        'Dillon 80': { type: 'split', districts: ['Dillon 3', 'Dillon 4'], weights: [0.5, 0.5] },
+        'Greenwood 80': { type: 'split', districts: ['Greenwood 50', 'Greenwood 51', 'Greenwood 52'], weights: [0.33, 0.33, 0.34] },
+        'Spartanburg 80': { type: 'split', districts: ['Spartanburg 3', 'Spartanburg 7'], weights: [0.5, 0.5] },
+        'Spartanburg 81': { type: 'split', districts: ['Spartanburg 4', 'Spartanburg 5', 'Spartanburg 6'], weights: [0.33, 0.33, 0.34] },
+        'Spartanburg 82': { type: 'split', districts: ['Spartanburg 1', 'Spartanburg 2'], weights: [0.5, 0.5] }
+    };
+
+    // Enhanced district name mapping with all charter/virtual schools
+    const DISTRICT_MAPPING = {
+        // Consolidated districts
+        'Bamberg 1': 'Bamberg County School District',
+        'Bamberg 2': 'Bamberg County School District',
+        'Bamberg 3': 'Bamberg County School District',
+        'Bamberg School District 1': 'Bamberg County School District',
+        'Bamberg School District 2': 'Bamberg County School District',
+        'Bamberg School District 3': 'Bamberg County School District',
+        'Bamberg 80': 'Bamberg County School District',
+        'Hampton 1': 'Hampton County School District',
+        'Hampton 2': 'Hampton County School District',
+        'Hampton 3': 'Hampton County School District',
+        'Hampton School District 1': 'Hampton County School District',
+        'Hampton School District 2': 'Hampton County School District',
+        'Hampton School District 3': 'Hampton County School District',
+        'Clarendon 1': 'Clarendon County School District',
+        'Clarendon 2': 'Clarendon County School District',
+        'Clarendon 3': 'Clarendon County School District',
+        'Clarendon 6': 'Clarendon County School District',
+        'Clarendon School District 1': 'Clarendon County School District',
+        'Clarendon School District 2': 'Clarendon County School District',
+        'Clarendon School District 3': 'Clarendon County School District',
+        'Florence 1': 'Florence School District 1',
+        'Florence 4': 'Florence School District 1',
+        'Florence School District 1': 'Florence School District 1',
+        'Florence School District 4': 'Florence School District 1',
+        'Barnwell 19': 'Barnwell School District 45',
+        'Barnwell 29': 'Barnwell School District 45',
+        'Barnwell 45': 'Barnwell School District 45',
+        'Barnwell 48': 'Barnwell School District 45',
+        'Barnwell School District 19': 'Barnwell School District 45',
+        'Barnwell School District 29': 'Barnwell School District 45',
+        'Barnwell County Consolidated School District': 'Barnwell School District 45',
+        'Barnwell 80': 'Barnwell School District 45',
+        
+        // Standard districts with variations
+        'Lexington/ Richland  5': 'Lexington School District 5',
+        'Lexington/ Richland 5': 'Lexington School District 5',
+        'Lexington/Richland 5': 'Lexington School District 5',
+        'Lexington 5': 'Lexington School District 5',
+        'York 1 (York)': 'York School District 1',
+        'York 2 (Clover)': 'York School District 2',
+        'York 3 (Rock Hill)': 'York School District 3',
+        'York 4 (Fort Mill)': 'York School District 4',
+        
+        // County school districts
+        'Abbeville': 'Abbeville County School District',
+        'Aiken': 'Aiken County School District',
+        'Allendale': 'Allendale County School District',
+        'Anderson 1': 'Anderson School District 1',
+        'Anderson 2': 'Anderson School District 2',
+        'Anderson 3': 'Anderson School District 3',
+        'Anderson 4': 'Anderson School District 4',
+        'Anderson 5': 'Anderson School District 5',
+        'Beaufort': 'Beaufort County School District',
+        'Berkeley': 'Berkeley County School District',
+        'Calhoun': 'Calhoun County School District',
+        'Charleston': 'Charleston County School District',
+        'Cherokee': 'Cherokee County School District',
+        'Chester': 'Chester County School District',
+        'Chesterfield': 'Chesterfield County School District',
+        'Colleton': 'Colleton County School District',
+        'Darlington': 'Darlington County School District',
+        'Dillon 3': 'Dillon School District 3',
+        'Dillon 4': 'Dillon School District 4',
+        'Dorchester 2': 'Dorchester School District 2',
+        'Dorchester 4': 'Dorchester School District 4',
+        'Edgefield': 'Edgefield County School District',
+        'Fairfield': 'Fairfield County School District',
+        'Florence 2': 'Florence School District 2',
+        'Florence 3': 'Florence School District 3',
+        'Florence 5': 'Florence School District 5',
+        'Georgetown': 'Georgetown County School District',
+        'Greenville': 'Greenville County School District',
+        'Greenwood 50': 'Greenwood School District 50',
+        'Greenwood 51': 'Greenwood School District 51',
+        'Greenwood 52': 'Greenwood School District 52',
+        'Horry': 'Horry County School District',
+        'Jasper': 'Jasper County School District',
+        'Kershaw': 'Kershaw County School District',
+        'Lancaster': 'Lancaster County School District',
+        'Laurens 55': 'Laurens School District 55',
+        'Laurens 56': 'Laurens School District 56',
+        'Lee': 'Lee County School District',
+        'Lexington 1': 'Lexington School District 1',
+        'Lexington 2': 'Lexington School District 2',
+        'Lexington 3': 'Lexington School District 3',
+        'Lexington 4': 'Lexington School District 4',
+        'Marion 10': 'Marion School District 10',
+        'Marlboro': 'Marlboro County School District',
+        'McCormick': 'McCormick County School District',
+        'Newberry': 'Newberry County School District',
+        'Oconee': 'Oconee County School District',
+        'Orangeburg': 'Orangeburg County School District',
+        'Pickens': 'Pickens County School District',
+        'Richland 1': 'Richland School District 1',
+        'Richland 2': 'Richland School District 2',
+        'Saluda': 'Saluda County School District',
+        'Spartanburg 1': 'Spartanburg School District 1',
+        'Spartanburg 2': 'Spartanburg School District 2',
+        'Spartanburg 3': 'Spartanburg School District 3',
+        'Spartanburg 4': 'Spartanburg School District 4',
+        'Spartanburg 5': 'Spartanburg School District 5',
+        'Spartanburg 6': 'Spartanburg School District 6',
+        'Spartanburg 7': 'Spartanburg School District 7',
+        'Sumter': 'Sumter County Consolidated School District',
+        'Union': 'Union County School District',
+        'Williamsburg': 'Williamsburg County School District',
+        
+        // Special cases
+        'School District Not Defined': 'Hampton County School District',
+        'Governor\'s Schools': 'State Schools',
+        'Governors Schools': 'State Schools',
+        'GOVERNORS SCHOOLS': 'State Schools',
+        'Charter Institute at Erskine': 'Charter Institute at Erskine',
+        'SC Public Charter District': 'SC Public Charter District',
+        'Limestone Charter Association': 'Limestone Charter Association',
+        'SC School for the Deaf and the Blind': 'State Schools',
+        'SC Governor\'s School for Arts and Humanities': 'State Schools',
+        'SC Governors School for Arts and Humanities': 'State Schools'
+    };
+
+    // Main application variables
+    let map, districtLayer, markerCluster, virtualDistrictsLayer;
+    let enrollmentData = [], districtGeoData, filteredData = [];
+    let currentCourse = 'all', districtCentroids = {}, schoolMarkers = {}, schoolData = {};
+    let tableVisible = false, selectedDistrict = null;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        initMap();
+        loadData();
+        
+        document.getElementById('show-table-btn').addEventListener('click', toggleTable);
+        document.getElementById('update-btn').addEventListener('click', updateMap);
+    });
+    
+    function initMap() {
+        map = L.map('map', {
+            minZoom: MIN_ZOOM,
+            maxZoom: MAX_ZOOM,
+            maxBounds: L.latLngBounds(
+                L.latLng(30.0, -83.5),  // Extended south
+                L.latLng(35.5, -77.0)   // Extended east
+            ),
+            maxBoundsViscosity: 1.0
+        }).setView(MAP_CENTER, MAP_ZOOM);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        
+        // Create virtual district polygons
+        virtualDistrictsLayer = L.layerGroup();
+        Object.entries(VIRTUAL_DISTRICTS).forEach(([name, config]) => {
+            const polygon = L.polygon(config.coords, {
+                color: config.color,
+                fillColor: config.color,
+                fillOpacity: 0.1,
+                weight: 2,
+                dashArray: '5,5',
+                className: 'virtual-district'
+            }).bindPopup(`<strong>${name}</strong><br>Virtual/Statewide District`);
+            
+            virtualDistrictsLayer.addLayer(polygon);
+        });
+        virtualDistrictsLayer.addTo(map);
+        
+        // Initialize layers
+        districtLayer = L.geoJSON().addTo(map);
+        markerCluster = L.markerClusterGroup({
+            iconCreateFunction: cluster => L.divIcon({
+                className: 'marker-cluster',
+                html: `<div>${cluster.getChildCount()}</div>`,
+                iconSize: L.point(40, 40)
+            }),
+            spiderfyOnMaxZoom: true,
+            showCoverageOnHover: false,
+            zoomToBoundsOnClick: true
+        }).addTo(map);
+    }
+    
+    function loadData() {
+        Papa.parse(CSV_URL, {
+            download: true,
+            header: true,
+            complete: results => {
+                if (!results.data?.length) {
+                    debugError("No data loaded");
+                    return;
+                }
+                
+                enrollmentData = results.data.filter(record => 
+                    record.District && record['OCTE Official Course Name'] && record['School/Center']
+                );
+                
+                if (enrollmentData.length === 0) {
+                    debugError("No valid records after filtering");
+                    return;
+                }
+                
+                processDistrictData();
+                populateDropdowns();
+                loadGeoJSON();
+            },
+            error: error => debugError("Error loading CSV: " + error.message)
+        });
+    }
+    
+    function processDistrictData() {
+        enrollmentData = enrollmentData.map(record => ({
+            ...record,
+            District: record.District.trim().replace(/\s+/g, ' '),
+            'School/Center': record['School/Center'].trim()
+        }));
+
+        console.log("Processing district data...");
+        schoolData = {};
+
+        enrollmentData.forEach(record => {
+            const districtName = record.District;
+            const schoolName = record['School/Center'];
+            const courseName = record['OCTE Official Course Name'];
+            const enrollment = parseInt(record.Total) || 0;
+            
+            console.log(`Processing: ${schoolName} in ${districtName}`);
+            
+            // Normalize names by removing apostrophes for comparison
+            const normalizedDistrict = districtName.toLowerCase().replace(/'/g, '');
+            const normalizedSchool = schoolName.toLowerCase().replace(/'/g, '');
+            
+            // Check both original and normalized names
+            let mappedDistrict = DISTRICT_MAPPING[schoolName] || 
+                               DISTRICT_MAPPING[schoolName.replace(/'/g, '')] ||
+                               DISTRICT_MAPPING[districtName] ||
+                               DISTRICT_MAPPING[normalizedDistrict] ||
+                               districtName;
+            
+            // Normalize merged district comparisons
+            let finalDistrict = mappedDistrict;
+            for (const [newName, oldNames] of Object.entries(DISTRICT_MERGES)) {
+                const normalizedOldNames = oldNames.map(name => name.toLowerCase().replace(/'/g, ''));
+                if (normalizedOldNames.includes(mappedDistrict.toLowerCase().replace(/'/g, ''))) {
+                    finalDistrict = newName;
+                    break;
+                }
+            }
+            
+            // Handle special districts (virtual or split)
+            if (SPECIAL_DISTRICTS[finalDistrict]) {
+                const special = SPECIAL_DISTRICTS[finalDistrict];
+                
+                if (special.type === 'virtual') {
+                    addCourseToSchool(finalDistrict, schoolName, courseName, enrollment);
+                    return;
+                } else if (special.type === 'split') {
+                    special.districts.forEach((district, i) => {
+                        const weightedEnrollment = Math.round(enrollment * special.weights[i]);
+                        addCourseToSchool(district, schoolName, courseName, weightedEnrollment, true, finalDistrict);
+                    });
+                    return;
+                }
+            }
+            
+            // Regular district processing
+            addCourseToSchool(finalDistrict, schoolName, courseName, enrollment);
+        });
+
+        // Convert school data back to flat array for display
+        enrollmentData = Object.values(schoolData).flatMap(district => 
+            Object.values(district.schools)
+        );
+    }
+    
+    function addCourseToSchool(district, schoolName, courseName, enrollment, isShared = false, sharedDistrict = null) {
+        if (!schoolData[district]) {
+            schoolData[district] = {
+                schools: {},
+                isVirtual: SPECIAL_DISTRICTS[district]?.type === 'virtual'
+            };
+        }
+        
+        if (!schoolData[district].schools[schoolName]) {
+            schoolData[district].schools[schoolName] = {
+                district: district,
+                name: schoolName,
+                courses: {},
+                totalEnrollment: 0,
+                isVirtual: schoolData[district].isVirtual,
+                isShared: isShared,
+                sharedDistrict: sharedDistrict
+            };
+        }
+        
+        const school = schoolData[district].schools[schoolName];
+        
+        if (!school.courses[courseName]) school.courses[courseName] = 0;
+        school.courses[courseName] += enrollment;
+        school.totalEnrollment += enrollment;
+    }
+    
+    function mergeDistrictPolygons(geoData) {
+        const mergedFeatures = [];
+        const mergeLookup = {};
+        
+        Object.entries(DISTRICT_MERGES).forEach(([newName, oldNames]) => {
+            oldNames.forEach(oldName => mergeLookup[oldName] = newName);
+            mergeLookup[newName] = newName;
+        });
+        
+        const featuresToMerge = {};
+        geoData.features.forEach(feature => {
+            const districtName = feature.properties.NAME || feature.properties.name;
+            const mergedName = mergeLookup[districtName] || districtName;
+            
+            if (!featuresToMerge[mergedName]) {
+                featuresToMerge[mergedName] = {
+                    type: 'Feature',
+                    properties: {
+                        ...feature.properties,
+                        NAME: mergedName,
+                        name: mergedName,
+                        merged: !!DISTRICT_MERGES[mergedName]
+                    },
+                    geometry: {
+                        type: 'MultiPolygon',
+                        coordinates: []
+                    }
+                };
+            }
+            
+            if (feature.geometry.type === 'Polygon') {
+                featuresToMerge[mergedName].geometry.coordinates.push(feature.geometry.coordinates);
+            } else if (feature.geometry.type === 'MultiPolygon') {
+                featuresToMerge[mergedName].geometry.coordinates.push(...feature.geometry.coordinates);
+            }
+        });
+        
+        Object.entries(featuresToMerge).forEach(([name, feature]) => {
+            if (feature.geometry.coordinates.length === 0) return;
+            
+            if (feature.properties.merged) {
+                try {
+                    let combined = turf.polygon([feature.geometry.coordinates[0][0]]);
+                    for (let i = 1; i < feature.geometry.coordinates.length; i++) {
+                        combined = turf.union(combined, turf.polygon([feature.geometry.coordinates[i][0]]));
+                    }
+                    feature.geometry = combined.geometry;
+                } catch (error) {
+                    debugError(`Failed to merge polygons for ${name}`);
+                    if (feature.geometry.coordinates.length === 1) {
+                        feature.geometry = {
+                            type: 'Polygon',
+                            coordinates: feature.geometry.coordinates[0]
+                        };
+                    }
+                }
+            } else if (feature.geometry.coordinates.length === 1) {
+                feature.geometry = {
+                    type: 'Polygon',
+                    coordinates: feature.geometry.coordinates[0]
+                };
+            }
+            
+            mergedFeatures.push(feature);
+        });
+        
+        return { ...geoData, features: mergedFeatures };
+    }
+
+    async function loadGeoJSON() {
+        try {
+            const response = await fetch(GEOJSON_URL);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            const data = await response.json();
+            districtGeoData = mergeDistrictPolygons(data.type === 'GeometryCollection' ? 
+                convertGeometryCollection(data) : data);
+            
+            calculateDistrictCentroids();
+            updateMap();
+        } catch (error) {
+            debugError("GeoJSON loading failed: " + error.message);
+            districtGeoData = { features: [] };
+            calculateDistrictCentroids();
+            updateMap();
+        }
+    }
+
+    function convertGeometryCollection(data) {
+        return {
+            type: 'FeatureCollection',
+            features: data.geometries.map((geometry, index) => ({
+                type: 'Feature',
+                properties: { 
+                    name: Object.values(DISTRICT_MAPPING)[index] || `District ${index}`
+                },
+                geometry: geometry
+            }))
+        };
+    }
+    
+    function calculateDistrictCentroids() {
+        districtCentroids = {};
+        const geoJsonLookup = {};
+        
+        // First create a lookup of GeoJSON features by normalized name
+        districtGeoData.features.forEach(feature => {
+            const name = feature.properties.NAME || feature.properties.name || '';
+            const normalized = normalizeGeoJsonDistrictName(name);
+            if (normalized) geoJsonLookup[normalized] = feature;
+        });
+
+        // Then calculate centroids for all districts in our school data
+        Object.keys(schoolData).forEach(districtName => {
+            // Virtual districts use their special polygon centers
+            if (schoolData[districtName]?.isVirtual) {
+                if (VIRTUAL_DISTRICTS[districtName]) {
+                    districtCentroids[districtName] = L.latLng(VIRTUAL_DISTRICTS[districtName].center);
+                } else {
+                    // Fallback to first virtual district center if not specifically configured
+                    districtCentroids[districtName] = L.latLng(Object.values(VIRTUAL_DISTRICTS)[0].center);
+                }
+                return;
+            }
+
+            // Split districts use the first component district's centroid
+            if (SPECIAL_DISTRICTS[districtName]?.type === 'split') {
+                const firstComponent = SPECIAL_DISTRICTS[districtName].districts[0];
+                const normalizedFirst = normalizeGeoJsonDistrictName(firstComponent);
+                const feature = geoJsonLookup[normalizedFirst];
+                
+                if (feature) {
+                    const centroid = calculateFeatureCentroid(feature);
+                    if (centroid) districtCentroids[districtName] = centroid;
+                } else {
+                    debugError(`No GeoJSON feature found for split district component: ${firstComponent}`);
+                    districtCentroids[districtName] = getRandomVirtualLocation(districtName);
+                }
+                return;
+            }
+
+            // Regular districts
+            const normalized = normalizeGeoJsonDistrictName(districtName);
+            const feature = geoJsonLookup[normalized];
+            
+            if (feature) {
+                const centroid = calculateFeatureCentroid(feature);
+                if (centroid) {
+                    districtCentroids[districtName] = centroid;
+                } else {
+                    debugError(`Could not calculate centroid for ${districtName}`);
+                    districtCentroids[districtName] = getRandomVirtualLocation(districtName);
+                }
+            } else {
+                debugError(`No GeoJSON feature found for district: ${districtName}`);
+                districtCentroids[districtName] = getRandomVirtualLocation(districtName);
+            }
+        });
+    }
+
+    function normalizeGeoJsonDistrictName(name) {
+        if (!name) return '';
+        
+        // First normalize by removing apostrophes
+        const normalizedName = name.toLowerCase().replace(/'/g, '');
+        
+        // Handle consolidated districts first
+        if (normalizedName.includes('bamberg')) return 'bamberg county school district';
+        if (normalizedName.includes('hampton')) return 'hampton county school district';
+        if (normalizedName.includes('clarendon')) return 'clarendon county school district';
+        if (normalizedName.includes('florence 1') || normalizedName.includes('florence 4')) return 'florence school district 1';
+        if (normalizedName.includes('barnwell')) return 'barnwell school district 45';
+        if (normalizedName.includes('orangeburg')) return 'orangeburg county school district';
+        
+        return normalizedName
+            .replace(/county school district/g, '')
+            .replace(/school district/g, '')
+            .replace(/county/g, '')
+            .replace(/sd/g, '')
+            .replace(/[^a-z0-9\s]/g, '')  // Remove special characters
+            .replace(/\s+/g, ' ') // Collapse multiple spaces
+            .trim();
+    }
+
+    function getRandomVirtualLocation(districtName = null) {
+        // Try to get the specified virtual district first
+        if (districtName && VIRTUAL_DISTRICTS[districtName]) {
+            const bounds = VIRTUAL_DISTRICTS[districtName].coords;
+            return L.latLng(
+                bounds[0][0] + Math.random() * (bounds[2][0] - bounds[0][0]),
+                bounds[0][1] + Math.random() * (bounds[1][1] - bounds[0][1])
+            );
+        }
+        
+        // Fallback to any virtual district
+        const virtualDistrict = Object.values(VIRTUAL_DISTRICTS)[0];
+        if (virtualDistrict) {
+            const bounds = virtualDistrict.coords;
+            return L.latLng(
+                bounds[0][0] + Math.random() * (bounds[2][0] - bounds[0][0]),
+                bounds[0][1] + Math.random() * (bounds[1][1] - bounds[0][1])
+            );
+        }
+        
+        // Ultimate fallback - use map center with small random offset
+        return L.latLng(
+            MAP_CENTER[0] + (Math.random() * 0.1 - 0.05),
+            MAP_CENTER[1] + (Math.random() * 0.1 - 0.05)
+        );
+    }
+
+    function calculateFeatureCentroid(feature) {
+        let geometry = feature.geometry;
+        
+        if (geometry.type === 'GeometryCollection') {
+            geometry = geometry.geometries.find(g => g.type === 'Polygon' || g.type === 'MultiPolygon');
+            if (!geometry) return null;
+        }
+
+        if (geometry.type === 'Polygon') {
+            const centroid = getPolygonCentroid(geometry.coordinates[0]);
+            return centroid ? L.latLng(centroid[1], centroid[0]) : null;
+        }
+        
+        if (geometry.type === 'MultiPolygon') {
+            if (feature.properties.merged) {
+                let totalArea = 0, weightedLat = 0, weightedLng = 0;
+                
+                geometry.coordinates.forEach(polygonGroup => {
+                    polygonGroup.forEach(polygon => {
+                        const area = getPolygonArea(polygon);
+                        const centroid = getPolygonCentroid(polygon);
+                        
+                        if (centroid) {
+                            totalArea += area;
+                            weightedLng += centroid[0] * area;
+                            weightedLat += centroid[1] * area;
+                        }
+                    });
+                });
+                
+                if (totalArea > 0) {
+                    return L.latLng(weightedLat / totalArea, weightedLng / totalArea);
+                }
+            }
+            
+            let maxArea = 0, largestPolygon;
+            
+            geometry.coordinates.forEach(polygonGroup => {
+                polygonGroup.forEach(polygon => {
+                    const area = getPolygonArea(polygon);
+                    if (area > maxArea) {
+                        maxArea = area;
+                        largestPolygon = polygon;
+                    }
+                });
+            });
+            
+            if (largestPolygon) {
+                const centroid = getPolygonCentroid(largestPolygon);
+                return centroid ? L.latLng(centroid[1], centroid[0]) : null;
+            }
+        }
+        
+        return null;
+    }
+
+    function getPolygonCentroid(coords) {
+        let x = 0, y = 0, area = 0;
+        
+        for (let i = 0; i < coords.length - 1; i++) {
+            const x0 = coords[i][0], y0 = coords[i][1];
+            const x1 = coords[i+1][0], y1 = coords[i+1][1];
+            const a = x0 * y1 - x1 * y0;
+            area += a;
+            x += (x0 + x1) * a;
+            y += (y0 + y1) * a;
+        }
+        
+        area /= 2;
+        return [x / (6 * area), y / (6 * area)];
+    }
+
+    function getPolygonArea(coords) {
+        let area = 0;
+        for (let i = 0; i < coords.length - 1; i++) {
+            area += (coords[i][0] * coords[i+1][1]) - (coords[i+1][0] * coords[i][1]);
+        }
+        return Math.abs(area / 2);
+    }
+    
+    function updateMap() {
+        if (markerCluster) markerCluster.clearLayers();
+        if (virtualDistrictsLayer) virtualDistrictsLayer.clearLayers();
+        schoolMarkers = {};
+        
+        currentCourse = document.getElementById('course-select').value;
+        const schoolsByDistrict = {};
+        
+        filteredData = [];
+        Object.keys(schoolData).forEach(districtName => {
+            const district = schoolData[districtName];
+            schoolsByDistrict[districtName] = [];
+            
+            Object.values(district.schools).forEach(school => {
+                if (currentCourse === 'all' || school.courses[currentCourse]) {
+                    schoolsByDistrict[districtName].push(school);
+                    filteredData.push(school);
+                }
+            });
+        });
+        
+        if (districtLayer) districtLayer.clearLayers();
+        if (districtGeoData?.features) {
+            districtGeoData.features.forEach(feature => {
+                const districtName = feature.properties.NAME || feature.properties.name;
+                const schools = schoolsByDistrict[districtName] || [];
+                const fillColor = schools.length > 0 ? '#3388ff' : '#cccccc';
+                
+                try {
+                    L.geoJSON(feature, {
+                        style: {
+                            fillColor: fillColor,
+                            weight: 1,
+                            opacity: 1,
+                            color: 'white',
+                            fillOpacity: 0.4,
+                            className: 'district-style'
+                        },
+                        onEachFeature: function(feature, layer) {
+                            layer.bindPopup(`
+                                <strong>${districtName}</strong><br>
+                                Schools: ${schools.length}<br>
+                                ${schools.length > 0 ? 
+                                    `Courses: ${new Set(schools.flatMap(s => Object.keys(s.courses))).size}` : 
+                                    ''}
+                            `);
+                            
+                            layer.on('click', () => showSchoolsForDistrict(districtName));
+                        }
+                    }).addTo(districtLayer);
+                } catch (error) {
+                    debugError(`Failed to create district layer for ${districtName}: ${error.message}`);
+                }
+            });
+            
+            try {
+                map.fitBounds(districtLayer.getBounds(), { padding: [20, 20] });
+            } catch (error) {
+                debugError("Could not fit bounds: " + error.message);
+            }
+        }
+        
+        // Recreate virtual district polygons
+        Object.entries(VIRTUAL_DISTRICTS).forEach(([name, config]) => {
+            const polygon = L.polygon(config.coords, {
+                color: config.color,
+                fillColor: config.color,
+                fillOpacity: 0.1,
+                weight: 2,
+                dashArray: '5,5',
+                className: 'virtual-district'
+            }).bindPopup(`<strong>${name}</strong><br>Virtual/Statewide District`);
+            
+            virtualDistrictsLayer.addLayer(polygon);
+        });
+        
+        filteredData.forEach(school => {
+            const districtName = school.district;
+            const isVirtual = school.isVirtual || SPECIAL_DISTRICTS[districtName]?.type === 'virtual';
+            
+            // Get centroid with better validation
+            let centroid;
+            if (isVirtual) {
+                if (VIRTUAL_DISTRICTS[districtName]?.center) {
+                    centroid = L.latLng(VIRTUAL_DISTRICTS[districtName].center);
+                } else {
+                    centroid = getRandomVirtualLocation(districtName);
+                    debugError(`No center defined for virtual district ${districtName}, using random position`);
+                }
+            } else {
+                centroid = districtCentroids[districtName] || getRandomVirtualLocation();
+            }
+
+            // Validate centroid
+            if (isNaN(centroid.lat) || isNaN(centroid.lng)) {
+                debugError(`Invalid centroid for ${school.name} in ${districtName}, using fallback`);
+                centroid = getRandomVirtualLocation(districtName);
+            }
+
+            try {
+                if (!centroid) {
+                    throw new Error("No centroid available");
+                }
+
+                let marker;
+                if (isVirtual) {
+                    marker = L.marker(centroid, {
+                        icon: createSpecialIcon('virtual'),
+                        opacity: 0.8
+                    });
+                } else if (school.isShared) {
+                    marker = L.marker(centroid, {
+                        icon: createSpecialIcon('shared'),
+                        opacity: 0.9
+                    });
+                } else {
+                    marker = L.marker(centroid);
+                }
+                
+                if (marker) {
+                    let popupContent = `<b>${school.name}</b><br>`;
+                    
+                    if (isVirtual) {
+                        popupContent += '<em>Statewide Program</em><br>';
+                    } else if (school.isShared && school.sharedDistrict) {
+                        popupContent += `<div class="shared-school-label">Shared with ${school.sharedDistrict}</div>`;
+                    }
+                    
+                    popupContent += `<b>District:</b> ${districtName}<br>`;
+                    
+                    if (currentCourse === 'all') {
+                        popupContent += `<b>Total Enrollment:</b> ${school.totalEnrollment}<br>`;
+                        popupContent += `<div class="course-list"><b>Courses Offered:</b>`;
+                        Object.entries(school.courses).forEach(([course, enrollment]) => {
+                            popupContent += `<div class="course-item">${course}: ${enrollment}</div>`;
+                        });
+                        popupContent += `</div>`;
+                    } else {
+                        popupContent += `<b>Course:</b> ${currentCourse}<br>`;
+                        popupContent += `<b>Enrollment:</b> ${school.courses[currentCourse] || 0}`;
+                    }
+                    
+                    marker.bindPopup(popupContent);
+                    
+                    if (!schoolMarkers[districtName]) schoolMarkers[districtName] = [];
+                    schoolMarkers[districtName].push(marker);
+                    
+                    if (isVirtual) {
+                        const markersInDistrict = schoolMarkers[districtName] || [];
+                        const angleStep = (2 * Math.PI) / Math.max(1, markersInDistrict.length);
+                        const radius = 0.003; // Even smaller radius for tighter grouping
+                        
+                        markersInDistrict.forEach((m, i) => {
+                            const angle = i * angleStep;
+                            m.setLatLng([
+                                centroid.lat + radius * Math.sin(angle),
+                                centroid.lng + radius * Math.cos(angle)
+                            ]);
+                        });
+                    }
+                    
+                    markerCluster.addLayer(marker);
+                }
+            } catch (error) {
+                debugError(`Failed to create marker for ${school.name} in ${districtName}: ${error.message}`);
+            }
+        });
+        
+        if (tableVisible) updateDataTable();
+        document.getElementById('loading-message').style.display = 'none';
+    }
+    
+    function showSchoolsForDistrict(districtName) {
+        if (selectedDistrict) {
+            schoolMarkers[selectedDistrict]?.forEach(marker => {
+                const isVirtual = schoolData[selectedDistrict]?.isVirtual;
+                const centroid = isVirtual ? 
+                    (VIRTUAL_DISTRICTS[selectedDistrict]?.center || getRandomVirtualLocation(selectedDistrict)) :
+                    (districtCentroids[selectedDistrict] || getRandomVirtualLocation(selectedDistrict));
+                marker.setLatLng(centroid);
+                marker.setZIndexOffset(0);
+            });
+        }
+        
+        selectedDistrict = districtName;
+        const isVirtual = schoolData[districtName]?.isVirtual;
+        const centroid = isVirtual ? 
+            (VIRTUAL_DISTRICTS[districtName]?.center || getRandomVirtualLocation(districtName)) :
+            (districtCentroids[districtName] || getRandomVirtualLocation(districtName));
+        const markers = schoolMarkers[districtName] || [];
+        
+        if (markers.length === 0) return;
+        
+        const angleStep = (2 * Math.PI) / markers.length;
+        const radius = isVirtual ? 0.005 : 0.02; // Smaller radius for virtual districts
+        
+        markers.forEach((marker, i) => {
+            const angle = i * angleStep;
+            marker.setLatLng([
+                centroid.lat + radius * Math.sin(angle),
+                centroid.lng + radius * Math.cos(angle)
+            ]);
+            marker.setZIndexOffset(1000);
+            marker.openPopup();
+        });
+        
+        const group = new L.featureGroup(markers);
+        map.fitBounds(group.getBounds(), { padding: [50, 50] });
+    }
+    
+    function createSpecialIcon(type) {
+        return L.divIcon({
+            className: `special-marker ${type}-marker`,
+            html: type === 'shared' ? 'Ⓢ' : 'Ⓥ',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+    }
+    
+    function populateDropdowns() {
+        const courseSelect = document.getElementById('course-select');
+        courseSelect.innerHTML = '<option value="all">All Courses</option>';
+        
+        const courses = new Set();
+        Object.values(schoolData).forEach(district => {
+            Object.values(district.schools).forEach(school => {
+                Object.keys(school.courses).forEach(course => courses.add(course));
+            });
+        });
+        
+        Array.from(courses).sort().forEach(course => {
+            const option = document.createElement('option');
+            option.value = course;
+            option.textContent = course;
+            courseSelect.appendChild(option);
+        });
+        
+        courseSelect.addEventListener('change', () => {
+            currentCourse = courseSelect.value;
+            updateMap();
+        });
+    }
+    
+    function toggleTable() {
+        tableVisible = !tableVisible;
+        const table = document.getElementById('data-table');
+        const btn = document.getElementById('show-table-btn');
+        table.style.display = tableVisible ? 'table' : 'none';
+        btn.textContent = tableVisible ? 'Hide Data Table' : 'Show Data Table';
+        if (tableVisible) updateDataTable();
+    }
+    
+    function updateDataTable() {
+        const tableBody = document.querySelector('#data-table tbody');
+        tableBody.innerHTML = '';
+        
+        filteredData.forEach(school => {
+            const row = document.createElement('tr');
+            
+            let districtCell = school.district;
+            if (school.isShared && school.sharedDistrict) {
+                districtCell += `<br><small>(Shared with ${school.sharedDistrict})</small>`;
+            } else if (SPECIAL_DISTRICTS[school.district]) {
+                districtCell += `<br><small>(${SPECIAL_DISTRICTS[school.district].type === 'virtual' ? 'Virtual' : 'Shared'})</small>`;
+            }
+            
+            let coursesCell = currentCourse === 'all' ? 
+                Object.keys(school.courses).sort().join(', ') : 
+                currentCourse;
+            
+            row.innerHTML = `
+                <td>${districtCell}</td>
+                <td>${school.name}</td>
+                <td>${coursesCell}</td>
+                <td>${currentCourse === 'all' ? school.totalEnrollment : (school.courses[currentCourse] || 0)}</td>
+            `;
+            tableBody.appendChild(row);
+        });
+    }
+    
+    function debugError(message) {
+        const console = document.getElementById('debug-console');
+        const entry = document.createElement('div');
+        entry.className = 'debug-log debug-error';
+        entry.textContent = `${new Date().toLocaleTimeString()}: ERROR - ${message}`;
+        console.appendChild(entry);
+        console.scrollTop = console.scrollHeight;
+        
+        document.getElementById('loading-message').textContent = "Error: " + message;
+        document.getElementById('loading-message').style.color = 'red';
+    }
+    </script>
+</body>
+</html>
